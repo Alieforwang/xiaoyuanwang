@@ -41,6 +41,7 @@ public class MainActivity extends AppCompatActivity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private android.widget.ScrollView scrollView;
+    private android.widget.ScrollView logScrollView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -56,6 +57,7 @@ public class MainActivity extends AppCompatActivity {
 
         // Initialize Views
         scrollView = findViewById(R.id.scroll_view);
+        logScrollView = findViewById(R.id.log_scroll);
         etUsername = findViewById(R.id.et_username);
         etPassword = findViewById(R.id.et_password);
         etDomain = findViewById(R.id.et_domain);
@@ -63,6 +65,14 @@ public class MainActivity extends AppCompatActivity {
         btnLogin = findViewById(R.id.btn_login);
         btnLogout = findViewById(R.id.btn_logout);
         btnInfo = findViewById(R.id.btn_info);
+        
+        // Initial Button State
+        updateUIState(false);
+        
+        // Setup Settings Button
+        findViewById(R.id.btn_settings).setOnClickListener(v -> {
+            startActivity(new Intent(this, SettingsActivity.class));
+        });
 
         configManager = new ConfigManager(this);
         
@@ -88,6 +98,8 @@ public class MainActivity extends AppCompatActivity {
                  appendLog("触发自动登录...");
                  performLogin();
              }
+        } else {
+             checkLoginStatus();
         }
     }
 
@@ -109,6 +121,16 @@ public class MainActivity extends AppCompatActivity {
             }
         } else {
             stopService(serviceIntent);
+        }
+        
+        // Refresh status if not auto-logging in (avoid double request if onCreate just ran)
+        // But onResume is called after onCreate.
+        // Let's just check status if we are not "processing".
+        // Simple check:
+        if (btnLogin.isEnabled() && btnLogout.isEnabled()) {
+            // This state shouldn't happen with our logic (one is disabled),
+            // but if we came back from settings, maybe we want to refresh.
+            checkLoginStatus();
         }
     }
     
@@ -190,9 +212,11 @@ public class MainActivity extends AppCompatActivity {
                 btnLogin.setEnabled(true);
                 if (success) {
                     appendLog("[OK] 登录成功！");
+                    updateUIState(true);
                     performGetInfo(); // Auto refresh info
                 } else {
                     appendLog("[FAIL] 登录失败，请检查账号密码或网络连接");
+                    updateUIState(false);
                 }
             });
         }).start();
@@ -213,11 +237,13 @@ public class MainActivity extends AppCompatActivity {
         new Thread(() -> {
             boolean success = srunPortal.logout(username, "1", "", domain);
             mainHandler.post(() -> {
-                btnLogout.setEnabled(true);
                 if (success) {
                     appendLog("[OK] 注销成功！");
+                    updateUIState(false);
                 } else {
                     appendLog("[FAIL] 注销失败");
+                    // Enable logout button again to retry, or check status
+                    btnLogout.setEnabled(true);
                 }
             });
         }).start();
@@ -245,22 +271,49 @@ public class MainActivity extends AppCompatActivity {
                         appendLog("IP地址: " + onlineIp);
                         appendLog(String.format(Locale.getDefault(), "已用流量: %.2f GB", gb));
                         appendLog("已用时长: " + hours + " 小时");
+                        
+                        updateUIState(true);
                     } catch (Exception e) {
                         appendLog("解析信息失败: " + e.getMessage());
                     }
                 } else {
                     appendLog("查询失败或当前不在线");
+                    updateUIState(false);
                 }
             });
         }).start();
+    }
+
+    private void checkLoginStatus() {
+        new Thread(() -> {
+            // SrunPortal.detectClientIp() is lightweight, but getUserInfo("") is more accurate for login status
+            // We use getUserInfo("") which returns null if not logged in
+            JSONObject info = srunPortal.getUserInfo("");
+            mainHandler.post(() -> {
+                boolean isOnline = (info != null);
+                updateUIState(isOnline);
+            });
+        }).start();
+    }
+
+    private void updateUIState(boolean isOnline) {
+        if (isOnline) {
+            btnLogin.setEnabled(false);
+            btnLogin.setText("已登录");
+            btnLogout.setEnabled(true);
+        } else {
+            btnLogin.setEnabled(true);
+            btnLogin.setText("立即登录");
+            btnLogout.setEnabled(false);
+        }
     }
 
     private void appendLog(String message) {
         String time = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date());
         tvLog.append(time + " " + message + "\n");
         // Scroll to bottom
-        if (scrollView != null) {
-            scrollView.post(() -> scrollView.fullScroll(View.FOCUS_DOWN));
+        if (logScrollView != null) {
+            logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
         }
     }
 }
